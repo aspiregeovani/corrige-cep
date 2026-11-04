@@ -1,0 +1,3 @@
+﻿const test=require('node:test'),assert=require('node:assert/strict');const {gerarUpdates}=require('./sql');
+test('SQL exporta apenas alterados e preserva zeros e códigos textuais',()=>{assert.equal(gerarUpdates([{cli_codigo:7,cli_cep:'01.001-000',cep_alterado:true},{cli_codigo:'A\'12',cli_cep:'17.200-000',cep_alterado:true},{cli_codigo:9,cep_alterado:false}]),"UPDATE clientes SET cli_cep = '01.001-000' WHERE cli_codigo = 7;\r\nUPDATE clientes SET cli_cep = '17.200-000' WHERE cli_codigo = 'A''12';\r\n")});
+test('SQL rejeita código ausente e CEP inválido',()=>{assert.throws(()=>gerarUpdates([{cli_codigo:null,cli_cep:'01.001-000',cep_alterado:true}]));assert.throws(()=>gerarUpdates([{cli_codigo:1,cli_cep:'123',cep_alterado:true}]));});
