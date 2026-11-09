@@ -4,18 +4,27 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "build": "node scripts/build.cjs",
+    "preview": "node scripts/preview.cjs",
+    "postal:seed": "node scripts/seed-postal.cjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "Atualização local de CEPs",
   "dependencies": {
+    "@neondatabase/serverless": "^1.2.0",
     "csv-parse": "^7.0.3",
     "express": "^5.3.0",
-    "multer": "^2.5.0"
+    "multer": "^2.5.0",
+    "pdfkit": "^0.20.2",
+    "sql.js": "^1.15.2"
   },
   "engines": {
     "node": ">=24"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

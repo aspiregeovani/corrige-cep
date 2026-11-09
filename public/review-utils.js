@@ -1,0 +1,24 @@
+(function(root,factory){
+ if(typeof module==='object'&&module.exports)module.exports=factory();
+ else root.CepReview=factory();
+})(typeof globalThis!=='undefined'?globalThis:this,function(){
+ const levels=['Alta','Média','Baixa'];
+ const searchNorm=v=>String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+ const confidenceOf=r=>r.cep_confianca_aplicada||r.cep_confianca_anterior||r.cep_confianca;
+ function filteredRows(rows,{tab='all',confidence='',code='',query=''}={}) {
+  let result=rows.filter(r=>tab==='review'?r.cep_status==='Revisar endereço':tab==='changed'?r.cep_alterado:true);
+  if(levels.includes(confidence))result=result.filter(r=>confidenceOf(r)===confidence);
+  const c=searchNorm(code),q=searchNorm(query);
+  if(c)result=result.filter(r=>searchNorm(r.cli_codigo)===c);
+  if(q)result=result.filter(r=>[r.cli_endereco,r.cli_numero,r.cli_bairro,r.cli_cidade,r.cli_uf,r.uf,r.descricao,r.cep_anterior,r.cli_cep,r.cep_nome_canonico]
+   .some(v=>searchNorm(v).includes(q)) || (/^\d{3,8}$/.test(q)&&[r.cep_anterior,r.cli_cep].some(v=>String(v??'').replace(/\D/g,'').includes(q))));
+  return result;
+ }
+ function bulkCandidates(rows) {
+  return rows.filter(r=>r.cep_status==='Revisar endereço'&&levels.includes(r.cep_confianca)&&
+   r.cep_sugestoes?.length&&!r.cep_sugestoes.some(s=>s.selecionado)&&
+   r.cep_sugestoes[0].confianca===r.cep_confianca&&/^\d{8}$/.test(String(r.cep_sugestoes[0].cep).replace(/\D/g,'')))
+   .map(r=>({id:r._rowId,cep:r.cep_sugestoes[0].cep,confianca:r.cep_confianca}));
+ }
+ return {levels,searchNorm,confidenceOf,filteredRows,bulkCandidates};
+});
