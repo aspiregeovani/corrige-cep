@@ -17,3 +17,5 @@ dialog{max-height:90vh;overflow-y:auto}
 .estimate-notice{margin:0 0 22px;padding:18px 22px;border:1px solid #e4c37d;border-left:5px solid #aa6b16;border-radius:10px;background:#fff8e8}.estimate-notice strong{color:#79501b;font-size:14px}.estimate-notice p{color:#775f37;font-size:13px;margin:8px 0 0}
 
 .pdf-export-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:16px 27px;background:#f7faf6;border-bottom:1px solid #e0eae1}.pdf-export-controls label{font-weight:700;color:#315b43}.pdf-export-controls select{font:inherit;color:#315b43;min-width:115px}.pdf-export-controls span,.pdf-export-controls small{font-size:12px;color:#597463}.pdf-export-controls small{flex-basis:100%;line-height:1.5}
+
+.bulk-message{flex-basis:100%;margin:0;color:#315b43;font-weight:600}.bulk-message:empty{display:none}

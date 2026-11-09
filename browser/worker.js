@@ -7,8 +7,28 @@ registerStdFonts(Helvetica,HelveticaBold,CourierBold);
 let db,core,store,queue=Promise.resolve(),running=false,busy=false,lastError='';
 const ufList='AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' ');
 function openStore(){return new Promise((resolve,reject)=>{const r=indexedDB.open('cep-em-dia',1);r.onupgradeneeded=()=>r.result.createObjectStore('snapshots');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});}
-function stored(mode,callback){return new Promise((resolve,reject)=>{const tx=store.transaction('snapshots',mode),request=callback(tx.objectStore('snapshots'));let value;request.onsuccess=()=>value=request.result;tx.oncomplete=()=>resolve(value);tx.onerror=()=>reject(tx.error);});}
-async function save(){await stored('readwrite',s=>s.put(db.export(),'database'));}
+const {stored}=require('./snapshot-store');
+async function save(){const snapshot=db.export();await stored(store,'readwrite',s=>s.put(snapshot,'database'));}
+async function applyBulkAndSave(body){
+ const previous=[];
+ const result=require('../selection').applyBulk(db,body,{beforeUpdate:(id,original)=>previous.push([original,id])});
+ if(!result.aplicados)return result;
+ try{
+  await save();
+  return result;
+ }catch(error){
+  const restore=db.prepare('UPDATE clientes SET resultado=? WHERE id=?');
+  db.exec('BEGIN');
+  try{
+   for(const record of previous)restore.run(...record);
+   db.exec('COMMIT');
+  }catch(rollbackError){
+   db.exec('ROLLBACK');
+   throw rollbackError;
+  }
+  throw Error('Não foi possível salvar o lote no navegador. '+error.message);
+ }
+}
 function rows(){return db.prepare('SELECT id,resultado FROM clientes ORDER BY id').all().map(r=>({...JSON.parse(r.resultado),_rowId:r.id}));}
 function originals(){return db.prepare('SELECT original FROM clientes').all().map(r=>JSON.parse(r.original));}
 const {loadCities,fetchJSON}=require('./postal-loader');
@@ -85,7 +105,10 @@ async function handle({url,method,body}){
  }
  if(url==='/api/pausar'){running=false;core.setState('pausado','1');await save();return {data:{ok:true}};}
  if(url==='/api/continuar'){core.setState('pausado','0');if(!busy)loadBases(ufList).catch(()=>{});return {data:{ok:true}};}
- if(url==='/api/aplicar-lote'){if(busy||running)return {status:409,data:{error:'Aguarde o processamento terminar.'}};const result=require('../selection').applyBulk(db,body);await save();return {data:result};}
+ if(url==='/api/aplicar-lote'){
+  if(busy||running)return {status:409,data:{error:'Aguarde o processamento terminar.'}};
+  return {data:await applyBulkAndSave(body)};
+ }
  if(url.startsWith('/api/escolher/')){const id=Number(url.split('/').pop()),row=db.prepare('SELECT resultado FROM clientes WHERE id=?').get(id);if(!row)return {status:404,data:{error:'Cliente não encontrado.'}};
   const r=require('../selection').chooseSuggestion(JSON.parse(row.resultado),body.cep);db.prepare('UPDATE clientes SET resultado=? WHERE id=?').run(JSON.stringify(r),id);await save();return {data:r};}
  if(url.startsWith('/api/exportar/')){
@@ -127,7 +150,7 @@ async function handle({url,method,body}){
  }
  throw Error('Operação não encontrada.');
 }
-async function boot(){store=await openStore();const bytes=await stored('readonly',s=>s.get('database'));const SQL=await initSqlJs({locateFile:()=>'/sql-wasm.wasm'});
+async function boot(){store=await openStore();const bytes=await stored(store,'readonly',s=>s.get('database'));const SQL=await initSqlJs({locateFile:()=>'/sql-wasm.wasm'});
  db=require('./db').activate(new SQL.Database(bytes));core=require('../core');db.exec('CREATE TABLE IF NOT EXISTS cidades_carregadas(uf TEXT,cidade TEXT,PRIMARY KEY(uf,cidade));CREATE TABLE IF NOT EXISTS cidades_ausentes(uf TEXT,cidade TEXT,motivo TEXT,consultado_em TEXT,PRIMARY KEY(uf,cidade));');
  if(!core.getState('execucao_id'))core.setState('execucao_id',crypto.randomUUID());
  postMessage({ready:true});if(core.getState('pausado')!=='1'){if(db.prepare("SELECT count(*) n FROM clientes WHERE json_extract(resultado,'$.cep_status')='Pendente'").get().n)loadBases(ufList).catch(e=>lastError=e.message);else start();}

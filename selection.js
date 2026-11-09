@@ -17,7 +17,7 @@ function chooseSuggestion(result,cep,{bulk=false,at=new Date().toISOString()}={}
  r.cep_motivo=bulk?`Primeira sugestão de confiança ${originalConfidence} aplicada em lote pelo usuário.`:'Sugestão escolhida manualmente pelo usuário.';
  return r;
 }
-function applyBulk(db,{execucaoId,itens}) {
+function applyBulk(db,{execucaoId,itens},{beforeUpdate}={}) {
  if(typeof execucaoId!=='string'||!execucaoId||!Array.isArray(itens)||!itens.length||itens.length>100000)
   throw Object.assign(Error('Informe a execução e os clientes filtrados.'),{status:400});
  const ids=new Set();
@@ -37,7 +37,9 @@ function applyBulk(db,{execucaoId,itens}) {
    const stored=get.get(item.id),r=stored?JSON.parse(stored.resultado):null;
    const current=r?bulkCandidates([{...r,_rowId:item.id}])[0]:null;
    if(!current||current.confianca!==item.confianca||digits(current.cep)!==digits(item.cep)){ignorados++;continue;}
-   put.run(JSON.stringify(chooseSuggestion(r,item.cep,{bulk:true,at})),item.id);aplicados++;
+   const chosen=chooseSuggestion(r,item.cep,{bulk:true,at});
+   beforeUpdate?.(item.id,stored.resultado);
+   put.run(JSON.stringify(chosen),item.id);aplicados++;
   }
   db.exec('COMMIT');return {aplicados,ignorados};
  }catch(e){db.exec('ROLLBACK');throw e;}
