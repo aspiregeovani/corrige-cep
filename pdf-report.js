@@ -1,5 +1,6 @@
 const {PDFDocument}=require('pdfkit');
 const notice=require('./public/disclaimer');
+const {pdfConfidenceOf,pdfRows}=require('./public/review-utils');
 
 const digits=value=>String(value??'').replace(/\D/g,'');
 const text=value=>String(value??'').replace(/[\u2010-\u2015]/g,'-').replace(/→/g,' para ')
@@ -14,12 +15,11 @@ function selectedSuggestion(row) {
  return (row.cep_sugestoes||[]).find(s=>s.selecionado&&sameCep(s)) ||
   (row.cep_sugestoes||[]).find(sameCep) || {};
 }
-function prepareReport(rows,{totalClients=rows.length,createdAt=new Date().toISOString(),partial=false}={}) {
+function prepareReport(rows,{totalClients=rows.length,createdAt=new Date().toISOString(),partial=false,confidence=''}={}) {
  const collator=new Intl.Collator('pt-BR',{numeric:true,sensitivity:'base'});
- const records=rows.filter(r=>r.cep_alterado&&digits(r.cep_anterior)!==digits(r.cli_cep)).map(r=>{
+ const records=pdfRows(rows,confidence).map(r=>{
   const s=selectedSuggestion(r);
-  const confidence=[s.confianca,r.cep_confianca_aplicada,r.cep_confianca_anterior,r.cep_confianca]
-   .find(c=>['Alta','Média','Baixa'].includes(c));
+  const confidence=pdfConfidenceOf(r);
   const count=(r.cep_sugestoes||[]).length;
   const group=({Alta:'high','Média':'medium',Baixa:'low'})[confidence] || (count>1?'exactMany':'exactOne');
   const notes=confidence?(s.motivos||r.cep_motivos_confianca||[]):[
@@ -34,10 +34,15 @@ function prepareReport(rows,{totalClients=rows.length,createdAt=new Date().toISO
    similarity:s.similaridade_nome??r.cep_similaridade_nome??null,alternatives:Math.max(0,count-1),
    reasons:notes.map(text),source:text(s.fonte||r.cep_fonte),group};
  });
- const groups=sections.map(([key,title,color])=>({key,title,color,records:records.filter(r=>r.group===key)
+ const groups=sections.filter(([key])=>!confidence||key===({Alta:'high','Média':'medium',Baixa:'low'})[confidence])
+  .map(([key,title,color])=>({key,title,color,records:records.filter(r=>r.group===key)
   .sort((a,b)=>collator.compare(a.uf,b.uf)||collator.compare(a.city,b.city)||collator.compare(a.street,b.street)||
    collator.compare(a.newCep,b.newCep)||collator.compare(a.code,b.code))}));
- return {totalClients,createdAt,partial,records,groups};
+ return {totalClients,createdAt,partial,confidence,records,groups};
+}
+function reportFilename({confidence='',partial=false}={}) {
+ const suffix=({Alta:'alta',Média:'media',Baixa:'baixa'})[confidence];
+ return 'cep-alterados-conferencia'+(suffix?'-'+suffix:'')+(partial?'-parcial':'')+'.pdf';
 }
 
 function sourceCode(source) {
@@ -129,7 +134,8 @@ async function renderReport(report,{compress=true}={}) {
  addPage();doc.addNamedDestination('cover','Fit');doc.outline.addItem('Resumo e índice');
  doc.rect(0,0,W,8).fill(ink);heading('CEP EM DIA / CONFERÊNCIA',M,26);
  heading('Alterações propostas de CEP',M,52,25);
- let y=paragraph(`${report.records.length.toLocaleString('pt-BR')} clientes para conferir | Gerado em ${stamp} (São Paulo)${report.partial?' | RELATÓRIO PARCIAL':''}`,87,10)+18;
+ let y=paragraph(`${report.records.length.toLocaleString('pt-BR')} ${report.records.length===1?'cliente':'clientes'} para conferir | Gerado em ${stamp} (São Paulo)${report.partial?' | RELATÓRIO PARCIAL':''}`,87,10)+18;
+ if(report.confidence){y=paragraph('Filtro do PDF: confiança '+report.confidence.toLocaleLowerCase('pt-BR')+'.',y,10)+10;}
  heading(notice.title,M,y,9,'#A96B1E');y+=16;y=paragraph(notice.body,y,8.5)+12;
  y=paragraph('Inclui os registros cujos dígitos do CEP selecionado diferem dos originais. Gerado com os dados atuais da aplicação; conferir antes de atualizar o ERP.',y)+16;
  heading('ÍNDICE E QUANTIDADES',M,y,9);y+=20;
@@ -177,4 +183,4 @@ async function renderReport(report,{compress=true}={}) {
  doc.end();
  return {buffer:await completed,pages:totalPages,records:report.records.length};
 }
-module.exports={prepareReport,renderReport};
+module.exports={prepareReport,renderReport,reportFilename};

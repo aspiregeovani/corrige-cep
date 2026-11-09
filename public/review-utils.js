@@ -5,6 +5,18 @@
  const levels=['Alta','Média','Baixa'];
  const searchNorm=v=>String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
  const confidenceOf=r=>r.cep_confianca_aplicada||r.cep_confianca_anterior||r.cep_confianca;
+ const digits=v=>String(v??'').replace(/\D/g,'');
+ function pdfConfidenceOf(row) {
+  const suggestions=row.cep_sugestoes||[],sameCep=s=>digits(s.cep)===digits(row.cli_cep);
+  const selected=suggestions.find(s=>s.selecionado&&sameCep(s))||suggestions.find(sameCep)||{};
+  return [selected.confianca,row.cep_confianca_aplicada,row.cep_confianca_anterior,row.cep_confianca]
+   .find(c=>levels.includes(c))||null;
+ }
+ function pdfRows(rows,confidence='') {
+  if(confidence!==''&&!levels.includes(confidence))throw Error('Confiança do PDF inválida.');
+  return rows.filter(r=>r.cep_alterado&&digits(r.cep_anterior)!==digits(r.cli_cep)&&
+   (!confidence||pdfConfidenceOf(r)===confidence));
+ }
  function filteredRows(rows,{tab='all',confidence='',code='',query=''}={}) {
   let result=rows.filter(r=>tab==='review'?r.cep_status==='Revisar endereço':tab==='changed'?r.cep_alterado:true);
   if(levels.includes(confidence))result=result.filter(r=>confidenceOf(r)===confidence);
@@ -20,5 +32,5 @@
    r.cep_sugestoes[0].confianca===r.cep_confianca&&/^\d{8}$/.test(String(r.cep_sugestoes[0].cep).replace(/\D/g,'')))
    .map(r=>({id:r._rowId,cep:r.cep_sugestoes[0].cep,confianca:r.cep_confianca}));
  }
- return {levels,searchNorm,confidenceOf,filteredRows,bulkCandidates};
+ return {levels,searchNorm,confidenceOf,filteredRows,bulkCandidates,pdfConfidenceOf,pdfRows};
 });

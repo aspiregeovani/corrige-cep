@@ -43,6 +43,7 @@ function tick(){if(!running||busy)return;const pending=db.prepare("SELECT id,ori
  catch(e){db.exec('ROLLBACK');running=false;lastError=e.message;return;}setTimeout(tick,0);
 }
 async function handle({url,method,body}){
+ const requestUrl=new URL(url,'https://cep.local');url=requestUrl.pathname;
  if(url==='/api/status'){
   const list=rows(),needed=[...new Set(list.map(core.getUf).filter(u=>ufList.includes(u)))].sort();
   const missing=[...new Set(originals().filter(c=>!db.prepare('SELECT 1 FROM cidades_carregadas WHERE uf=? AND cidade=?').get(core.getUf(c),core.norm(c.cli_cidade))).map(core.getUf).filter(u=>ufList.includes(u)))];
@@ -69,8 +70,10 @@ async function handle({url,method,body}){
   if(kind==='alterados')list=list.filter(r=>r.cep_alterado);else if(kind!=='todos')return {status:404,data:{error:'Exportação inválida.'}};
   const name='cep-'+kind+(partial?'-parcial':'');
   if(format==='pdf'){
-   const {prepareReport,renderReport}=require('../pdf-report');const r=await renderReport(prepareReport(list,{totalClients,partial}));
-   return {binary:r.buffer,headers:{'Content-Type':'application/pdf','Content-Disposition':'attachment; filename="'+name+'-conferencia.pdf"','X-Report-Records':String(r.records),'X-Report-Pages':String(r.pages)}};
+   const confidence=requestUrl.searchParams.get('confidence')||'';
+   if(confidence!==''&&!['Alta','Média','Baixa'].includes(confidence))return {status:400,data:{error:'Confiança do PDF inválida.'}};
+   const {prepareReport,renderReport,reportFilename}=require('../pdf-report');const r=await renderReport(prepareReport(list,{totalClients,partial,confidence}));
+   return {binary:r.buffer,headers:{'Content-Type':'application/pdf','Content-Disposition':'attachment; filename="'+reportFilename({confidence,partial})+'"','X-Report-Records':String(r.records),'X-Report-Pages':String(r.pages)}};
   }
   let content,type;if(format==='json'){content=JSON.stringify(list.map(({_rowId,...r})=>r));type='application/json';}
   else if(format==='sql'&&kind==='alterados'){content=require('../sql').gerarUpdates(list);type='application/sql';}

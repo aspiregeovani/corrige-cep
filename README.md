@@ -59,7 +59,7 @@ Os registros aplicados recebem o status `Aplicado em lote pelo usuário`, mantê
 
 ## PDF no site
 
-O botão **Alterados · PDF** gera um relatório novo a cada clique, com todos os clientes marcados como alterados, independentemente dos filtros da tabela. Inclui CEP anterior/proposto, endereço original e da base, confiança, alternativas, motivos e espaço de conferência. Há aviso explícito de estimativa na capa e em todas as páginas. A exportação não executa SQL nem modifica clientes. No servidor local, a geração usa um Worker Node; na versão hospedada, ocorre no Worker do navegador. Não requer Python.
+O botão **Alterados · PDF** gera um relatório novo a cada clique, com os clientes alterados na confiança escolhida em **Confiança do PDF**: Baixa, Média, Alta ou Todos, independentemente dos filtros da tabela. A opção Todos também inclui as correspondências exatas sem nota semântica. O número de clientes elegíveis aparece ao lado do botão; a capa e o nome do arquivo identificam o filtro escolhido. Inclui CEP anterior/proposto, endereço original e da base, confiança, alternativas, motivos e espaço de conferência. Há aviso explícito de estimativa na capa e em todas as páginas. A exportação não executa SQL nem modifica clientes. No servidor local, a geração usa um Worker Node; na versão hospedada, ocorre no Worker do navegador. Não requer Python.
 
 ## Vercel e Neon
 

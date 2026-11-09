@@ -2,6 +2,7 @@
 const {chooseSuggestion,applyBulk}=require('./selection');
 const {randomUUID}=require('node:crypto');
 const {generatePDF}=require('./pdf-export');
+const {reportFilename}=require('./pdf-report');
 const express=require('express'), multer=require('multer'), fs=require('node:fs'), path=require('node:path'), {pipeline}=require('node:stream/promises'), {Readable}=require('node:stream'), {parse}=require('csv-parse');
 const {db,norm,digits,mask,getUf,getState,setState,processClient}=require('./core');
 if(!getState('execucao_id'))setState('execucao_id',randomUUID());
@@ -36,14 +37,16 @@ app.post('/api/escolher/:id',(req,res)=>{
  }catch(e){res.status(400).json({error:e.message});}
 });
 app.get('/api/exportar/alterados/pdf',async(req,res)=>{
+ const confidence=req.query.confidence??'';
+ if(confidence!==''&&!['Alta','Média','Baixa'].includes(confidence))return res.status(400).json({error:'Confiança do PDF inválida.'});
  const rows=db.prepare('SELECT resultado FROM clientes ORDER BY id').all().map(r=>JSON.parse(r.resultado));
- const metadata={totalClients:rows.length,createdAt:new Date().toISOString(),partial:running||busy||rows.some(r=>r.cep_status==='Pendente')};
+ const metadata={totalClients:rows.length,createdAt:new Date().toISOString(),partial:running||busy||rows.some(r=>r.cep_status==='Pendente'),confidence};
  const controller=new AbortController();
  const disconnected=()=>{if(!res.writableEnded)controller.abort();};res.once('close',disconnected);
  try{const result=await generatePDF(rows,metadata,{signal:controller.signal});
  if(res.destroyed)return;
  res.set('Content-Type','application/pdf');res.set('Cache-Control','no-store');
- res.set('Content-Disposition','attachment; filename="cep-alterados-conferencia'+(metadata.partial?'-parcial':'')+'.pdf"');
+ res.set('Content-Disposition','attachment; filename="'+reportFilename(metadata)+'"');
  res.set('X-Report-Records',String(result.records));res.set('X-Report-Pages',String(result.pages));res.send(result.buffer);
  }catch(e){if(!res.destroyed)res.status(500).json({error:'Não foi possível gerar o PDF: '+e.message});}
  finally{res.removeListener('close',disconnected);}

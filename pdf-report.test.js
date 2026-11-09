@@ -1,5 +1,5 @@
 const test=require('node:test'),assert=require('node:assert/strict');
-const {prepareReport,renderReport}=require('./pdf-report');
+const {prepareReport,renderReport,reportFilename}=require('./pdf-report');
 const notice=require('./public/disclaimer');
 const fixture=(code,confidence)=>({cli_codigo:code,cli_cidade:'Bariri',descricao:'SP',cli_endereco:'RUA ORIGINAL',cli_bairro:'Centro',
  cli_cep:'17.255-282',cep_anterior:'17.250-000',cep_alterado:true,cep_confianca_aplicada:confidence,
@@ -17,6 +17,22 @@ test('relatório usa o CEP escolhido e separa exatas sem inventar confiança',()
 });
 test('grau do candidato escolhido prevalece sobre a classificação anterior',()=>{
  const row=fixture(1,'Baixa');row.cep_confianca_aplicada='Alta';assert.equal(prepareReport([row]).records[0].confidence,'Baixa');
+});
+test('PDF por confiança inclui somente alterados do CEP escolhido e Todos inclui exatos sem nota',()=>{
+ const input=[fixture(1,'Baixa'),fixture(2,'Média'),fixture(3,'Alta'),fixture(4),
+  {...fixture(5,'Baixa'),cep_alterado:false},{...fixture(6,'Alta'),cep_anterior:'17255282'}];
+ input[0].cep_confianca_aplicada='Alta';
+ const original=JSON.stringify(input),{pdfRows}=require('./public/review-utils');
+ for(const [confidence,code] of [['Baixa','1'],['Média','2'],['Alta','3']]){
+  const report=prepareReport(input,{confidence});
+  assert.deepEqual(report.records.map(r=>r.code),[code]);assert.equal(report.groups.length,1);
+  assert.equal(report.confidence,confidence);assert.equal(pdfRows(input,confidence).length,1);
+ }
+ assert.deepEqual(prepareReport(input).records.map(r=>r.code),['1','2','3','4']);
+ assert.equal(prepareReport([fixture(1,'Alta')],{confidence:'Baixa'}).records.length,0);
+ assert.throws(()=>prepareReport(input,{confidence:'Inválida'}),/inválida/);
+ assert.equal(reportFilename({confidence:'Média',partial:true}),'cep-alterados-conferencia-media-parcial.pdf');
+ assert.equal(reportFilename(),'cep-alterados-conferencia.pdf');assert.equal(JSON.stringify(input),original);
 });
 test('PDF válido é gerado para consulta vazia e para linhas muito longas',async()=>{
  const empty=await renderReport(prepareReport([],{createdAt:'2026-11-09T12:00:00Z'}));
