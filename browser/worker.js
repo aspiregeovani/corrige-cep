@@ -79,7 +79,10 @@ async function handle({url,method,body}){
   }catch(e){db.exec('ROLLBACK');throw e;}
   await save();loadBases([...new Set(list.map(core.getUf))]).catch(()=>{});return {data:{total:list.length}};
  }
- if(url==='/api/download')return {data:await loadBases(body.ufs,true)};
+ if(url==='/api/download'){
+  if(busy)return {status:409,data:{error:'Outra importação está em andamento.'}};
+  loadBases(body.ufs,true).catch(e=>lastError=e.message);return {data:{ok:true}};
+ }
  if(url==='/api/pausar'){running=false;core.setState('pausado','1');await save();return {data:{ok:true}};}
  if(url==='/api/continuar'){core.setState('pausado','0');if(!busy)loadBases(ufList).catch(()=>{});return {data:{ok:true}};}
  if(url==='/api/aplicar-lote'){if(busy||running)return {status:409,data:{error:'Aguarde o processamento terminar.'}};const result=require('../selection').applyBulk(db,body);await save();return {data:result};}
