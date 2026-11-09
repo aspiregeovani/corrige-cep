@@ -11,43 +11,63 @@ function stored(mode,callback){return new Promise((resolve,reject)=>{const tx=st
 async function save(){await stored('readwrite',s=>s.put(db.export(),'database'));}
 function rows(){return db.prepare('SELECT id,resultado FROM clientes ORDER BY id').all().map(r=>({...JSON.parse(r.resultado),_rowId:r.id}));}
 function originals(){return db.prepare('SELECT original FROM clientes').all().map(r=>JSON.parse(r.original));}
-async function cloudStatus(){const r=await fetch('/api/postal');const j=await r.json();if(!r.ok)throw Error(j.error||'Base central indisponível.');return j.bases;}
+const {loadCities,fetchJSON}=require('./postal-loader');
+let baseProgress=null;
+const unavailable=(uf,city)=>db.prepare('SELECT motivo FROM cidades_ausentes WHERE uf=? AND cidade=?').get(uf,city);
+async function cloudStatus(){return (await fetchJSON('/api/postal')).bases;}
 async function loadBases(ufs,force=false){
- if(busy)throw Error('Outra importação está em andamento.');busy=true;running=false;lastError='';
+ if(busy)throw Error('Outra importação está em andamento.');busy=true;lastError='';
+ const cities=new Map();for(const c of originals()){const uf=core.getUf(c),city=core.norm(c.cli_cidade);if(ufs.includes(uf)&&city){const key=uf+'|'+city;const item=cities.get(key)||{uf,city,count:0};item.count++;cities.set(key,item);}}
+ baseProgress={total:cities.size,completed:0};
+ if(core.getState('pausado')!=='1')start();
  try{
   const bases=await cloudStatus(),baseByUf=new Map(bases.map(b=>[b.uf,b]));
-  const cities=new Map();for(const c of originals()){const uf=core.getUf(c),city=core.norm(c.cli_cidade);if(ufs.includes(uf)&&city)cities.set(uf+'|'+city,{uf,city});}
-  for(const {uf,city} of cities.values()){
-   const base=baseByUf.get(uf);if(!base)continue;
-   if(!force&&db.prepare('SELECT 1 FROM cidades_carregadas WHERE uf=? AND cidade=?').get(uf,city))continue;
-   const response=await fetch('/api/postal?action=city&uf='+encodeURIComponent(uf)+'&city='+encodeURIComponent(city),{cache:force?'reload':'default'});
-   const snapshot=await response.json();if(!response.ok){lastError=snapshot.error||'Cidade indisponível na base.';continue;}
-   db.exec('BEGIN');try{
-    db.prepare('DELETE FROM enderecos WHERE uf=? AND cidade=?').run(uf,city);
-    const put=db.prepare('INSERT INTO enderecos VALUES(?,?,?,?,?,?)');
-    for(const r of snapshot.registros)put.run(uf,city,r.rua,r.bairro,r.cep,r.original);
-    db.prepare('INSERT OR REPLACE INTO bases VALUES(?,?,?,?,?)').run(uf,base.fonte,base.versao,base.baixado_em,base.registros);
-    db.prepare('INSERT OR REPLACE INTO cidades_carregadas VALUES(?,?)').run(uf,city);db.exec('COMMIT');
-   }catch(e){db.exec('ROLLBACK');throw e;}
-   require('../review').clearReviewCache(db);
-  }
-  await save();
- }catch(e){lastError=e.message;throw e;}finally{busy=false;if(core.getState('pausado')!=='1')start();}
- return {ok:true};
+  for(const base of bases)db.prepare('INSERT OR REPLACE INTO bases VALUES(?,?,?,?,?)').run(base.uf,base.fonte,base.versao,base.baixado_em,base.registros);
+  const result=await loadCities([...cities.values()].sort((a,b)=>b.count-a.count),{
+   isCached:({uf,city})=>!force&&(db.prepare('SELECT 1 FROM cidades_carregadas WHERE uf=? AND cidade=?').get(uf,city)||unavailable(uf,city)),
+   load:async({uf,city})=>{
+    if(!baseByUf.has(uf))throw Error('UF não disponível na base central.');
+    const snapshot=await fetchJSON('/api/postal?action=city&uf='+encodeURIComponent(uf)+'&city='+encodeURIComponent(city),{cache:force?'reload':'default'});
+    if(!Array.isArray(snapshot.registros))throw Error('Resposta inválida da base postal.');
+    if(!snapshot.registros.length)throw Object.assign(Error('Cidade sem endereços na base postal.'),{status:404});
+    return snapshot;
+   },
+   importSnapshot:({uf,city},snapshot)=>{
+    db.exec('BEGIN');try{
+     db.prepare('DELETE FROM enderecos WHERE uf=? AND cidade=?').run(uf,city);
+     const put=db.prepare('INSERT INTO enderecos VALUES(?,?,?,?,?,?)');
+     for(const r of snapshot.registros)put.run(uf,city,r.rua,r.bairro,r.cep,r.original);
+     db.prepare('INSERT OR REPLACE INTO cidades_carregadas VALUES(?,?)').run(uf,city);
+     db.prepare('DELETE FROM cidades_ausentes WHERE uf=? AND cidade=?').run(uf,city);db.exec('COMMIT');
+    }catch(e){db.exec('ROLLBACK');throw e;}
+    require('../review').clearReviewCache(db);
+   },
+   onMissing:({uf,city},error)=>{
+    // Uma recarga malsucedida nunca invalida endereços já salvos.
+    if(!db.prepare('SELECT 1 FROM cidades_carregadas WHERE uf=? AND cidade=?').get(uf,city))
+     db.prepare('INSERT OR REPLACE INTO cidades_ausentes VALUES(?,?,?,?)').run(uf,city,error.message,new Date().toISOString());
+   },
+   onReady:()=>{if(core.getState('pausado')!=='1')start();},
+   onProgress:p=>{baseProgress=p;},
+  });
+  if(result.failed)lastError=result.failed+' cidade(s) não carregada(s): '+result.failures.map(f=>f.city+' / '+f.uf).join(', ')+'. As demais continuam sendo processadas. Use Continuar para tentar novamente.';
+ }catch(e){lastError=e.message;}finally{busy=false;await save();if(core.getState('pausado')!=='1')start();}
+ return {ok:!lastError};
 }
-function start(){if(running||busy)return;running=true;core.setState('pausado','0');setTimeout(tick,0);}
-function tick(){if(!running||busy)return;const pending=db.prepare("SELECT id,original FROM clientes WHERE json_extract(resultado,'$.cep_status')='Pendente' ORDER BY id").all();
- const ready=pending.filter(r=>{const c=JSON.parse(r.original),uf=core.getUf(c),city=core.norm(c.cli_cidade);return !ufList.includes(uf)||!city||!core.norm(c.cli_endereco)||db.prepare('SELECT 1 FROM cidades_carregadas WHERE uf=? AND cidade=?').get(uf,city);}).slice(0,100);
+function start(){if(running)return;running=true;core.setState('pausado','0');setTimeout(tick,0);}
+function tick(){if(!running)return;const pending=db.prepare("SELECT id,original FROM clientes WHERE json_extract(resultado,'$.cep_status')='Pendente' ORDER BY id").all();
+ const ready=pending.filter(r=>{const c=JSON.parse(r.original),uf=core.getUf(c),city=core.norm(c.cli_cidade);return !ufList.includes(uf)||!city||!core.norm(c.cli_endereco)||db.prepare('SELECT 1 FROM cidades_carregadas WHERE uf=? AND cidade=?').get(uf,city)||unavailable(uf,city);}).slice(0,100);
  if(!ready.length){running=false;save().catch(e=>lastError=e.message);return;}
- db.exec('BEGIN');try{const put=db.prepare('UPDATE clientes SET resultado=? WHERE id=?');for(const row of ready)put.run(JSON.stringify(core.processClient(JSON.parse(row.original))),row.id);db.exec('COMMIT');}
+ db.exec('BEGIN');try{const put=db.prepare('UPDATE clientes SET resultado=? WHERE id=?');for(const row of ready){const original=JSON.parse(row.original),result=core.processClient(original);if(unavailable(core.getUf(original),core.norm(original.cli_cidade))){result.cep_status='Não encontrado';result.cep_motivo='Cidade '+original.cli_cidade+' / '+core.getUf(original)+' sem endereços na base postal. Confira a cidade e a UF ou importe um complemento. O CEP original foi mantido.';}put.run(JSON.stringify(result),row.id);}db.exec('COMMIT');}
  catch(e){db.exec('ROLLBACK');running=false;lastError=e.message;return;}setTimeout(tick,0);
 }
 async function handle({url,method,body}){
  const requestUrl=new URL(url,'https://cep.local');url=requestUrl.pathname;
  if(url==='/api/status'){
   const list=rows(),needed=[...new Set(list.map(core.getUf).filter(u=>ufList.includes(u)))].sort();
-  const missing=[...new Set(originals().filter(c=>!db.prepare('SELECT 1 FROM cidades_carregadas WHERE uf=? AND cidade=?').get(core.getUf(c),core.norm(c.cli_cidade))).map(core.getUf).filter(u=>ufList.includes(u)))];
-  return {data:{rows:list,bases:db.prepare('SELECT * FROM bases ORDER BY uf').all(),supplementalBases:[],needed,missing,running,busy,paused:core.getState('pausado')==='1',execucaoId:core.getState('execucao_id'),error:lastError}};
+  const missing=[...new Set(originals().filter(c=>!db.prepare('SELECT 1 FROM cidades_carregadas WHERE uf=? AND cidade=?').get(core.getUf(c),core.norm(c.cli_cidade))&&!unavailable(core.getUf(c),core.norm(c.cli_cidade))).map(core.getUf).filter(u=>ufList.includes(u)))];
+  const absent=[...new Set(originals().filter(c=>unavailable(core.getUf(c),core.norm(c.cli_cidade))).map(c=>core.norm(c.cli_cidade)+' / '+core.getUf(c)))];
+  return {data:{baseProgress,warning:absent.length?'Cidade(s) sem endereços na base: '+absent.join(', ')+'. Esses clientes ficam como Não encontrado; confira a cidade e a UF.':'',rows:list,bases:db.prepare('SELECT * FROM bases ORDER BY uf').all(),supplementalBases:[],needed,missing,running,busy,paused:core.getState('pausado')==='1',execucaoId:core.getState('execucao_id'),error:lastError}};
  }
  if(url==='/api/clientes'){
   if(busy)return {status:409,data:{error:'Aguarde o carregamento das bases terminar.'}};
@@ -61,7 +81,7 @@ async function handle({url,method,body}){
  }
  if(url==='/api/download')return {data:await loadBases(body.ufs,true)};
  if(url==='/api/pausar'){running=false;core.setState('pausado','1');await save();return {data:{ok:true}};}
- if(url==='/api/continuar'){if(!busy)loadBases(ufList).catch(()=>{});return {data:{ok:true}};}
+ if(url==='/api/continuar'){core.setState('pausado','0');if(!busy)loadBases(ufList).catch(()=>{});return {data:{ok:true}};}
  if(url==='/api/aplicar-lote'){if(busy||running)return {status:409,data:{error:'Aguarde o processamento terminar.'}};const result=require('../selection').applyBulk(db,body);await save();return {data:result};}
  if(url.startsWith('/api/escolher/')){const id=Number(url.split('/').pop()),row=db.prepare('SELECT resultado FROM clientes WHERE id=?').get(id);if(!row)return {status:404,data:{error:'Cliente não encontrado.'}};
   const r=require('../selection').chooseSuggestion(JSON.parse(row.resultado),body.cep);db.prepare('UPDATE clientes SET resultado=? WHERE id=?').run(JSON.stringify(r),id);await save();return {data:r};}
@@ -98,16 +118,16 @@ async function handle({url,method,body}){
    }
    if(!addresses.length)throw Error('CSV vazio.');
    db.prepare('INSERT OR REPLACE INTO bases VALUES(?,?,?,?,?)').run(uf,'Importação local','Arquivo local',new Date().toISOString(),addresses.length);
-   for(const city of loaded)db.prepare('INSERT OR REPLACE INTO cidades_carregadas VALUES(?,?)').run(uf,city);
+   for(const city of loaded){db.prepare('INSERT OR REPLACE INTO cidades_carregadas VALUES(?,?)').run(uf,city);db.prepare('DELETE FROM cidades_ausentes WHERE uf=? AND cidade=?').run(uf,city);}
    db.exec('COMMIT');require('../review').clearReviewCache(db);await save();return {data:{count:addresses.length}};
   }catch(e){try{db.exec('ROLLBACK');}catch{}throw e;}finally{busy=false;if(core.getState('pausado')!=='1')start();}
  }
  throw Error('Operação não encontrada.');
 }
 async function boot(){store=await openStore();const bytes=await stored('readonly',s=>s.get('database'));const SQL=await initSqlJs({locateFile:()=>'/sql-wasm.wasm'});
- db=require('./db').activate(new SQL.Database(bytes));core=require('../core');db.exec('CREATE TABLE IF NOT EXISTS cidades_carregadas(uf TEXT,cidade TEXT,PRIMARY KEY(uf,cidade));');
+ db=require('./db').activate(new SQL.Database(bytes));core=require('../core');db.exec('CREATE TABLE IF NOT EXISTS cidades_carregadas(uf TEXT,cidade TEXT,PRIMARY KEY(uf,cidade));CREATE TABLE IF NOT EXISTS cidades_ausentes(uf TEXT,cidade TEXT,motivo TEXT,consultado_em TEXT,PRIMARY KEY(uf,cidade));');
  if(!core.getState('execucao_id'))core.setState('execucao_id',crypto.randomUUID());
- postMessage({ready:true});if(core.getState('pausado')!=='1')start();
+ postMessage({ready:true});if(core.getState('pausado')!=='1'){if(db.prepare("SELECT count(*) n FROM clientes WHERE json_extract(resultado,'$.cep_status')='Pendente'").get().n)loadBases(ufList).catch(e=>lastError=e.message);else start();}
 }
 onmessage=event=>{queue=queue.then(async()=>{try{const result=await handle(event.data);if(result.binary)postMessage({id:event.data.id,result},[result.binary.buffer]);else postMessage({id:event.data.id,result});}
  catch(e){postMessage({id:event.data.id,result:{status:e.status||400,data:{error:e.message}}});}});};
