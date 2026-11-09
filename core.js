@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const {findReviewRows} = require('./review');
+const {keepSpecificCep} = require('./public/review-utils');
 fs.mkdirSync('data', {recursive:true});
 const db = new DatabaseSync('data/cep.sqlite');
 db.exec(`PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS bases(uf TEXT PRIMARY KEY, fonte TEXT, versao TEXT, baixado_em TEXT, registros INTEGER); CREATE TABLE IF NOT EXISTS enderecos(uf TEXT,cidade TEXT,rua TEXT,bairro TEXT,cep TEXT,original TEXT); CREATE INDEX IF NOT EXISTS endereco_busca ON enderecos(uf,cidade,rua,bairro); CREATE TABLE IF NOT EXISTS clientes(id INTEGER PRIMARY KEY, original TEXT NOT NULL, resultado TEXT NOT NULL); CREATE TABLE IF NOT EXISTS estado(chave TEXT PRIMARY KEY, valor TEXT);`);
@@ -29,6 +30,28 @@ function processClient(original) {
  out.cep_sugestoes=[...groups.values()];out.cep_quantidade_sugestoes=groups.size;
  if(!groups.size){out.cep_status='Não encontrado';out.cep_motivo='Nenhum logradouro exato encontrado nesta cidade e UF.';return out;}
  if(needsReview){out.cep_status='Revisar endereço';out.cep_confianca=out.cep_sugestoes[0].confianca;out.cep_confianca_logradouro=out.cep_sugestoes[0].confianca_logradouro;out.cep_nome_canonico=out.cep_sugestoes[0].endereco;out.cep_similaridade_nome=out.cep_sugestoes[0].similaridade_nome;out.cep_motivos_confianca=out.cep_sugestoes[0].motivos;out.cep_motivo='Sugestão por interpretação de grafia e contexto. Confiança '+out.cep_confianca+'. '+out.cep_motivos_confianca.join(' ')+' O CEP original foi mantido; confirme antes de escolher.';out.cep_fonte=[...new Set(out.cep_sugestoes.map(s=>s.fonte))].join(' | ');out.cep_base_versao=[...new Set(out.cep_sugestoes.map(s=>s.versao))].join(' | ');return out;}
- const oldDigits=digits(old), firstDigits=digits(out.cep_sugestoes[0].cep);const keepOld=oldDigits.length===8 && !oldDigits.endsWith('000') && oldDigits.slice(0,5)===firstDigits.slice(0,5) && out.cep_sugestoes.some(s=>digits(s.cep)===oldDigits);const previous=keepOld ? out.cep_sugestoes.find(s=>digits(s.cep)===oldDigits) : null;if(previous){out.cep_sugestoes.splice(out.cep_sugestoes.indexOf(previous),1);out.cep_sugestoes.unshift(previous);}if(!keepOld || previous)out.cep_sugestoes[0].selecionado=true;out.cli_cep=keepOld?mask(old):out.cep_sugestoes[0].cep;out.cep_alterado=digits(old)!==digits(out.cli_cep);out.cep_status=groups.size>1?'Selecionado automaticamente':'Correspondência única';out.cep_motivo=(keepOld?'CEP anterior encontrado nas sugestões e mantido por compartilhar a raiz de cinco dígitos com o primeiro resultado. ':'')+'Logradouro e cidade exatos após normalização. A base não informa faixa de numeração, lado ou trecho.'+(digits(old).length!==8?' CEP anterior inválido preservado para auditoria.':'');out.cep_fonte=out.cep_sugestoes[0].fonte;out.cep_base_versao=out.cep_sugestoes[0].versao;return out;
+ const recommended=out.cep_sugestoes[0],oldDigits=digits(old),firstDigits=digits(recommended.cep);
+ const protectsSpecific=keepSpecificCep(old,recommended.cep);
+ const previous=oldDigits.length===8&&!oldDigits.endsWith('000')&&oldDigits.slice(0,5)===firstDigits.slice(0,5)
+  ? out.cep_sugestoes.find(s=>digits(s.cep)===oldDigits)
+  : undefined;
+ if(previous){
+  out.cep_sugestoes.splice(out.cep_sugestoes.indexOf(previous),1);
+  out.cep_sugestoes.unshift(previous);
+ }
+ const chosen=previous||(protectsSpecific?undefined:recommended);
+ if(chosen)chosen.selecionado=true;
+ out.cli_cep=chosen?.cep??mask(old);
+ out.cep_alterado=oldDigits!==digits(out.cli_cep);
+ out.cep_status=protectsSpecific?'CEP anterior mantido':groups.size>1?'Selecionado automaticamente':'Correspondência única';
+ const reason=protectsSpecific
+  ? 'CEP específico mantido porque o recomendado termina em -000 e tem a mesma raiz de cinco dígitos. '
+  : previous?'CEP anterior encontrado nas sugestões e mantido por compartilhar a raiz de cinco dígitos com o primeiro resultado. ':'';
+ out.cep_motivo=reason+'Logradouro e cidade exatos após normalização. A base não informa faixa de numeração, lado ou trecho.'+
+  (oldDigits.length!==8?' CEP anterior inválido preservado para auditoria.':'');
+ const source=chosen||recommended;
+ out.cep_fonte=source.fonte;
+ out.cep_base_versao=source.versao;
+ return out;
 }
 module.exports={db,norm,digits,mask,getUf,getState,setState,processClient};

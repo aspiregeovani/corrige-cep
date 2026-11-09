@@ -52,6 +52,20 @@ test('outra carga, confiança modificada e sugestão trocada não são aplicadas
  assert.deepEqual(applyBulk(db,{execucaoId:'run-1',itens:[{...items[0],confianca:'Baixa'},{...items[1],cep:'17.259-999'}]}),{aplicados:0,ignorados:2});
  assert.ok(read(db).every(r=>!r.cep_alterado));db.close();
 });
+test('lote preserva CEP específico diante de recomendação 000 da mesma raiz, com escolha manual disponível',()=>{
+ const db=setup(),review=result(1,'Alta');
+ review.cli_cep=review.cep_anterior='17.250-101';
+ review.cep_sugestoes[0].cep='17.250-000';
+ db.prepare('UPDATE clientes SET resultado=? WHERE id=1').run(JSON.stringify(review));
+ assert.ok(!bulkCandidates(read(db)).some(item=>item.id===1));
+ assert.deepEqual(applyBulk(db,{execucaoId:'run-1',itens:[{id:1,cep:'17.250-000',confianca:'Alta'}]}),
+  {aplicados:0,ignorados:1});
+ const [kept]=read(db);
+ assert.equal(kept.cli_cep,'17.250-101');
+ assert.equal(gerarUpdates([kept]),'');
+ assert.equal(chooseSuggestion(kept,'17.250-000').cli_cep,'17.250-000');
+ db.close();
+});
 test('aplicação não substitui escolha manual e faz rollback se um registro falhar',()=>{
  const db=setup(),items=bulkCandidates(read(db));
  const manual=chooseSuggestion(result(1,'Alta'),'17.259-999');

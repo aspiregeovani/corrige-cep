@@ -29,7 +29,7 @@ Dados persistentes e temporários ficam em `data/`, excluídos do Git: `cep.sqli
 
 A opção **Alterados · SQL** gera um UPDATE por registro alterado, com CEP em texto e máscara. O arquivo não é executado pelo aplicativo. Códigos ausentes ou inválidos impedem a exportação; confira códigos duplicados antes de executar.
 
-O CEP anterior é mantido se tiver a mesma raiz de cinco dígitos do primeiro resultado e constar entre as sugestões. Se terminar em -000 ou não constar nas sugestões, o primeiro resultado é usado. Uma escolha manual continua disponível.
+Se a primeira recomendação termina em -000 e tem a mesma raiz de cinco dígitos de um CEP específico já cadastrado, a seleção automática e a aplicação em massa preservam o CEP do cadastro, mesmo sem encontrá-lo na lista de sugestões. Nos outros casos de correspondência exata, o CEP anterior é mantido se for específico, tiver a mesma raiz e constar entre as sugestões. Caso contrário, aplica-se a primeira recomendação. A escolha manual continua disponível.
 
 ## Complementos municipais
 

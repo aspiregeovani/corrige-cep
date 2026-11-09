@@ -6,6 +6,10 @@
  const searchNorm=v=>String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
  const confidenceOf=r=>r.cep_confianca_aplicada||r.cep_confianca_anterior||r.cep_confianca;
  const digits=v=>String(v??'').replace(/\D/g,'');
+ function keepSpecificCep(current,recommended) {
+  const old=digits(current),next=digits(recommended);
+  return old.length===8&&next.length===8&&!old.endsWith('000')&&next.endsWith('000')&&old.slice(0,5)===next.slice(0,5);
+ }
  function pdfConfidenceOf(row) {
   const suggestions=row.cep_sugestoes||[],sameCep=s=>digits(s.cep)===digits(row.cli_cep);
   const selected=suggestions.find(s=>s.selecionado&&sameCep(s))||suggestions.find(sameCep)||{};
@@ -29,8 +33,9 @@
  function bulkCandidates(rows) {
   return rows.filter(r=>r.cep_status==='Revisar endereço'&&levels.includes(r.cep_confianca)&&
    r.cep_sugestoes?.length&&!r.cep_sugestoes.some(s=>s.selecionado)&&
-   r.cep_sugestoes[0].confianca===r.cep_confianca&&/^\d{8}$/.test(String(r.cep_sugestoes[0].cep).replace(/\D/g,'')))
+   r.cep_sugestoes[0].confianca===r.cep_confianca&&digits(r.cep_sugestoes[0].cep).length===8&&
+   !keepSpecificCep(r.cli_cep,r.cep_sugestoes[0].cep))
    .map(r=>({id:r._rowId,cep:r.cep_sugestoes[0].cep,confianca:r.cep_confianca}));
  }
- return {levels,searchNorm,confidenceOf,filteredRows,bulkCandidates,pdfConfidenceOf,pdfRows};
+ return {levels,searchNorm,confidenceOf,filteredRows,bulkCandidates,keepSpecificCep,pdfConfidenceOf,pdfRows};
 });

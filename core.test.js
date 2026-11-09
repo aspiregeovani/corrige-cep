@@ -5,6 +5,21 @@ test('mantém o CEP anterior somente se encontrado nas sugestões',()=>{const in
 
 test('CEP anterior terminado em 000 utiliza o resultado recomendado',()=>{const r=processClient({cli_endereco:'Avenida Hideo Takada',cli_cidade:'Sertaozinho',descricao:'SP',cli_bairro:'Parque',cli_cep:'14.177-000'});assert.equal(r.cli_cep,'14.177-170');assert.equal(r.cep_alterado,true);assert.equal(r.cep_sugestoes[0].selecionado,true)});
 
+test('recomendação com final 000 só preserva CEP específico com a mesma raiz',()=>{
+ const insert=db.prepare('INSERT INTO enderecos VALUES(?,?,?,?,?,?)');
+ insert.run('SP','TESTE','RUA EXEMPLO','CENTRO','14177000',JSON.stringify({endereco:'Rua Exemplo',bairro:'Centro'}));
+ const client={cli_codigo:1,cli_endereco:'Rua Exemplo',cli_cidade:'Teste',descricao:'SP',cli_bairro:'Centro',cli_cep:'14.177-999'};
+ const kept=processClient(client);
+ assert.equal(kept.cli_cep,client.cli_cep);
+ assert.equal(kept.cep_status,'CEP anterior mantido');
+ assert.equal(kept.cep_alterado,false);
+ assert.equal(kept.cep_sugestoes[0].selecionado,false);
+ assert.equal(require('./sql').gerarUpdates([kept]),'');
+ const changed=processClient({...client,cli_cep:'14.178-999'});
+ assert.equal(changed.cli_cep,'14.177-000');
+ assert.equal(changed.cep_alterado,true);
+});
+
 test('complemento municipal preserva a base estadual e registra a fonte da sugestão',()=>{
  const {importSupplement}=require('./supplement');
  const snapshot={uf:'SP',cidade:'Bariri',fonte:'https://viacep.com.br/',obtido_em:'2026-11-09T12:00:00.000Z',registros:[
