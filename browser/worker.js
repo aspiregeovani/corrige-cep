@@ -7,8 +7,13 @@ registerStdFonts(Helvetica,HelveticaBold,CourierBold);
 let db,core,store,queue=Promise.resolve(),running=false,busy=false,lastError='';
 const ufList='AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' ');
 function openStore(){return new Promise((resolve,reject)=>{const r=indexedDB.open('cep-em-dia',1);r.onupgradeneeded=()=>r.result.createObjectStore('snapshots');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});}
-const {stored}=require('./snapshot-store');
-async function save(){const snapshot=db.export();await stored(store,'readwrite',s=>s.put(snapshot,'database'));}
+const {loadSnapshot,saveSnapshot}=require('./snapshot-store');
+let saving=Promise.resolve();
+function save(){
+ const task=saving.then(()=>saveSnapshot(store,db.export()));
+ saving=task.catch(()=>{});
+ return task;
+}
 async function applyBulkAndSave(body){
  const previous=[];
  const result=require('../selection').applyBulk(db,body,{beforeUpdate:(id,original)=>previous.push([original,id])});
@@ -71,13 +76,13 @@ async function loadBases(ufs,force=false){
    onProgress:p=>{baseProgress=p;},
   });
   if(result.failed)lastError=result.failed+' cidade(s) não carregada(s): '+result.failures.map(f=>f.city+' / '+f.uf).join(', ')+'. As demais continuam sendo processadas. Use Continuar para tentar novamente.';
- }catch(e){lastError=e.message;}finally{busy=false;await save();if(core.getState('pausado')!=='1')start();}
+ }catch(e){lastError=e.message;}finally{busy=false;await save();}
  return {ok:!lastError};
 }
 function start(){if(running)return;running=true;core.setState('pausado','0');setTimeout(tick,0);}
 function tick(){if(!running)return;const pending=db.prepare("SELECT id,original FROM clientes WHERE json_extract(resultado,'$.cep_status')='Pendente' ORDER BY id").all();
  const ready=pending.filter(r=>{const c=JSON.parse(r.original),uf=core.getUf(c),city=core.norm(c.cli_cidade);return !ufList.includes(uf)||!city||!core.norm(c.cli_endereco)||db.prepare('SELECT 1 FROM cidades_carregadas WHERE uf=? AND cidade=?').get(uf,city)||unavailable(uf,city);}).slice(0,100);
- if(!ready.length){running=false;save().catch(e=>lastError=e.message);return;}
+ if(!ready.length){running=false;if(!busy)save().catch(e=>lastError=e.message);return;}
  db.exec('BEGIN');try{const put=db.prepare('UPDATE clientes SET resultado=? WHERE id=?');for(const row of ready){const original=JSON.parse(row.original),result=core.processClient(original);if(unavailable(core.getUf(original),core.norm(original.cli_cidade))){result.cep_status='Não encontrado';result.cep_motivo='Cidade '+original.cli_cidade+' / '+core.getUf(original)+' sem endereços na base postal. Confira a cidade e a UF ou importe um complemento. O CEP original foi mantido.';}put.run(JSON.stringify(result),row.id);}db.exec('COMMIT');}
  catch(e){db.exec('ROLLBACK');running=false;lastError=e.message;return;}setTimeout(tick,0);
 }
@@ -150,10 +155,10 @@ async function handle({url,method,body}){
  }
  throw Error('Operação não encontrada.');
 }
-async function boot(){store=await openStore();const bytes=await stored(store,'readonly',s=>s.get('database'));const SQL=await initSqlJs({locateFile:()=>'/sql-wasm.wasm'});
+async function boot(){store=await openStore();const bytes=await loadSnapshot(store);const SQL=await initSqlJs({locateFile:()=>'/sql-wasm.wasm'});
  db=require('./db').activate(new SQL.Database(bytes));core=require('../core');db.exec('CREATE TABLE IF NOT EXISTS cidades_carregadas(uf TEXT,cidade TEXT,PRIMARY KEY(uf,cidade));CREATE TABLE IF NOT EXISTS cidades_ausentes(uf TEXT,cidade TEXT,motivo TEXT,consultado_em TEXT,PRIMARY KEY(uf,cidade));');
  if(!core.getState('execucao_id'))core.setState('execucao_id',crypto.randomUUID());
- postMessage({ready:true});if(core.getState('pausado')!=='1'){if(db.prepare("SELECT count(*) n FROM clientes WHERE json_extract(resultado,'$.cep_status')='Pendente'").get().n)loadBases(ufList).catch(e=>lastError=e.message);else start();}
+ postMessage({ready:true});if(core.getState('pausado')!=='1'&&db.prepare("SELECT 1 FROM clientes WHERE json_extract(resultado,'$.cep_status')='Pendente' LIMIT 1").get())loadBases(ufList).catch(e=>lastError=e.message);
 }
 onmessage=event=>{queue=queue.then(async()=>{try{const result=await handle(event.data);if(result.binary)postMessage({id:event.data.id,result},[result.binary.buffer]);else postMessage({id:event.data.id,result});}
  catch(e){postMessage({id:event.data.id,result:{status:e.status||400,data:{error:e.message}}});}});};
