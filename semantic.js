@@ -1,5 +1,5 @@
 // Resolução conservadora de nomes. Pontuações são semelhança, não probabilidade.
-// Os resultados deste módulo nunca autorizam seleção automática de CEP.
+// A política de seleção de CEP fica em selection.js.
 const clean = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g,'')
   .toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
 const types = new Map(Object.entries({R:'RUA',RUA:'RUA',AV:'AVENIDA',AVENIDA:'AVENIDA',PC:'PRACA',PRACA:'PRACA',

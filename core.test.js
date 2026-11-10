@@ -19,6 +19,38 @@ test('recomendação com final 000 só preserva CEP específico com a mesma raiz
  assert.equal(changed.cli_cep,'14.177-000');
  assert.equal(changed.cep_alterado,true);
 });
+test('alta confiança é selecionada automaticamente e entra no SQL e no PDF com a classificação original',()=>{
+ const insert=db.prepare('INSERT INTO enderecos VALUES(?,?,?,?,?,?)');
+ insert.run('SP','TESTE ALTA','RUA JOSE EDGARD ROSSI','JARDIM SANTA CLARA','17255212',
+  JSON.stringify({endereco:'Rua José Edgard Rossi',bairro:'Jardim Santa Clara'}));
+ const client={cli_codigo:111,cli_endereco:'RUA JOSE EDGAR ROSSI',cli_cidade:'Teste Alta',
+  descricao:'SP',cli_bairro:'JD SANTA CLARA',cli_cep:'17.250-000'};
+ const selected=processClient(client);
+ assert.equal(selected.cep_status,'Selecionado automaticamente');
+ assert.equal(selected.cli_cep,'17.255-212');
+ assert.equal(selected.cep_confianca,'Alta');
+ assert.equal(selected.cep_confianca_aplicada,'Alta');
+ assert.equal(selected.cep_sugestoes.filter(s=>s.selecionado).length,1);
+ assert.match(require('./sql').gerarUpdates([selected]),/17\.255-212/);
+ const report=require('./pdf-report').prepareReport([selected],{confidence:'Alta'});
+ assert.equal(report.records.length,1);
+ assert.equal(report.records[0].confidence,'Alta');
+ assert.equal(report.records[0].oldCep,'17.250-000');
+ assert.equal(processClient({...client,cli_cep:'17.255-212'}).cep_alterado,false);
+});
+test('alta confiança preserva CEP específico quando a sugestão é 000 da mesma raiz',()=>{
+ db.prepare('INSERT INTO enderecos VALUES(?,?,?,?,?,?)').run('SP','TESTE PROTECAO ALTA',
+  'RUA LUIZ FURLANETO','JARDIM DOMINGOS AQUILANTE','17255000',
+  JSON.stringify({endereco:'Rua Luiz Furlaneto',bairro:'Jardim Domingos Aquilante'}));
+ const selected=processClient({cli_codigo:112,cli_endereco:'RUA LUIS FURLANETTO',
+  cli_cidade:'Teste Protecao Alta',descricao:'SP',cli_bairro:'DOMINGOS AQUILANTE',cli_cep:'17.255-212'});
+ assert.equal(selected.cep_confianca,'Alta');
+ assert.equal(selected.cep_status,'CEP anterior mantido');
+ assert.equal(selected.cli_cep,'17.255-212');
+ assert.equal(selected.cep_alterado,false);
+ assert.equal(selected.cep_sugestoes[0].selecionado,false);
+ assert.equal(require('./sql').gerarUpdates([selected]),'');
+});
 
 test('complemento municipal preserva a base estadual e registra a fonte da sugestão',()=>{
  const {importSupplement}=require('./supplement');
@@ -41,18 +73,18 @@ test('complemento municipal preserva a base estadual e registra a fonte da suges
  assert.throws(()=>importSupplement({...snapshot,registros:[]}));
 });
 
-test('nomes aproximados exigem revisão e não entram como CEP alterado',()=>{
+test('variações de alta confiança são selecionadas e nomes sem correspondência continuam sem resultado',()=>{
  const {importSupplement}=require('./supplement');
  importSupplement({uf:'SP',cidade:'Itaju',fonte:'https://www.cepbusca.com.br/cep/sp/itaju',versao:'listagem',obtido_em:'2026-11-09T12:00:00Z',registros:[
   {uf:'SP',localidade:'Itaju',logradouro:'Rua Sete de Setembro',bairro:'Centro',cep:'17260-101'},
   {uf:'SP',localidade:'Itaju',logradouro:'Avenida Doutor Antonio Galizia',bairro:'Centro',cep:'17260-103'}
  ]});
  const client={descricao:'SP',cli_cidade:'Itaju',cli_endereco:'RUA 7 DE SETEMBRO',cli_cep:'17.260-000'};
- let r=processClient(client);assert.equal(r.cep_status,'Revisar endereço');assert.equal(r.cli_cep,'17.260-000');
- assert.equal(r.cep_alterado,false);assert.equal(r.cep_sugestoes.length,1);assert.equal(r.cep_sugestoes[0].selecionado,false);
- assert.equal(require('./sql').gerarUpdates([r]),'');
+ let r=processClient(client);assert.equal(r.cep_status,'Selecionado automaticamente');assert.equal(r.cli_cep,'17.260-101');
+ assert.equal(r.cep_alterado,true);assert.equal(r.cep_sugestoes.length,1);assert.equal(r.cep_sugestoes[0].selecionado,true);
+ assert.match(require('./sql').gerarUpdates([{...r,cli_codigo:113}]),/17\.260-101/);
  assert.equal(r.cep_sugestoes[0].cep,'17.260-101');
- r=processClient({...client,cli_endereco:'AV DR ANTONIO GALIZIA'});assert.equal(r.cep_status,'Revisar endereço');assert.equal(r.cep_alterado,false);
+ r=processClient({...client,cli_endereco:'AV DR ANTONIO GALIZIA'});assert.equal(r.cep_status,'Selecionado automaticamente');assert.equal(r.cli_cep,'17.260-103');assert.equal(r.cep_alterado,true);
  assert.equal(processClient({...client,cli_cidade:'Outra cidade'}).cep_status,'Não encontrado');
  assert.equal(processClient({...client,cli_endereco:'S / E'}).cep_status,'Não encontrado');
  importSupplement({uf:'SP',cidade:'Itaju',fonte:'https://www.cepbusca.com.br/cep/sp/itaju',obtido_em:'2026-11-09T12:01:00Z',registros:[

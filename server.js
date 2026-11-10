@@ -1,11 +1,12 @@
 ﻿const {gerarUpdates}=require('./sql');
-const {chooseSuggestion,applyBulk}=require('./selection');
+const {chooseSuggestion,applyBulk,applyStoredHighConfidence}=require('./selection');
 const {randomUUID}=require('node:crypto');
 const {generatePDF}=require('./pdf-export');
 const {reportFilename}=require('./pdf-report');
 const express=require('express'), multer=require('multer'), fs=require('node:fs'), path=require('node:path'), {pipeline}=require('node:stream/promises'), {Readable}=require('node:stream'), {parse}=require('csv-parse');
 const {db,norm,digits,mask,getUf,getState,setState,processClient}=require('./core');
 if(!getState('execucao_id'))setState('execucao_id',randomUUID());
+applyStoredHighConfidence(db);
 const app=express(), upload=multer({dest:'data/tmp/',limits:{fileSize:1024*1024*1024}});app.use(express.json({limit:'10mb'}));app.use(express.static('public'));
 const ufs='AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' '), source='https://github.com/welyab/cep';
 let running=false, busy=false;

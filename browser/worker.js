@@ -14,9 +14,9 @@ function save(){
  saving=task.catch(()=>{});
  return task;
 }
-async function applyBulkAndSave(body){
+async function saveSelectionChanges(apply){
  const previous=[];
- const result=require('../selection').applyBulk(db,body,{beforeUpdate:(id,original)=>previous.push([original,id])});
+ const result=apply({beforeUpdate:(id,original)=>previous.push([original,id])});
  if(!result.aplicados)return result;
  try{
   await save();
@@ -31,7 +31,7 @@ async function applyBulkAndSave(body){
    db.exec('ROLLBACK');
    throw rollbackError;
   }
-  throw Error('Não foi possível salvar o lote no navegador. '+error.message);
+  throw Error('Não foi possível salvar as alterações no navegador. '+error.message);
  }
 }
 function rows(){return db.prepare('SELECT id,resultado FROM clientes ORDER BY id').all().map(r=>({...JSON.parse(r.resultado),_rowId:r.id}));}
@@ -123,7 +123,7 @@ async function handle({url,method,body}){
  if(url==='/api/continuar'){core.setState('pausado','0');if(!busy)loadBases(ufList).catch(()=>{});return {data:{ok:true}};}
  if(url==='/api/aplicar-lote'){
   if(busy||running)return {status:409,data:{error:'Aguarde o processamento terminar.'}};
-  return {data:await applyBulkAndSave(body)};
+  return {data:await saveSelectionChanges(options=>require('../selection').applyBulk(db,body,options))};
  }
  if(url.startsWith('/api/escolher/')){const id=Number(url.split('/').pop()),row=db.prepare('SELECT resultado FROM clientes WHERE id=?').get(id);if(!row)return {status:404,data:{error:'Cliente não encontrado.'}};
   const r=require('../selection').chooseSuggestion(JSON.parse(row.resultado),body.cep);db.prepare('UPDATE clientes SET resultado=? WHERE id=?').run(JSON.stringify(r),id);await save();return {data:r};}
@@ -169,6 +169,9 @@ async function handle({url,method,body}){
 async function boot(){store=await openStore();const bytes=await loadSnapshot(store);const SQL=await initSqlJs({locateFile:()=>'/sql-wasm.wasm'});
  db=require('./db').activate(new SQL.Database(bytes));core=require('../core');db.exec('CREATE TABLE IF NOT EXISTS cidades_carregadas(uf TEXT,cidade TEXT,PRIMARY KEY(uf,cidade));CREATE TABLE IF NOT EXISTS cidades_ausentes(uf TEXT,cidade TEXT,motivo TEXT,consultado_em TEXT,PRIMARY KEY(uf,cidade));');
  if(!core.getState('execucao_id'))core.setState('execucao_id',crypto.randomUUID());
+ try{
+  await saveSelectionChanges(options=>require('../selection').applyStoredHighConfidence(db,options));
+ }catch(error){lastError=error.message;}
  postMessage({ready:true});if(core.getState('pausado')!=='1'&&db.prepare("SELECT 1 FROM clientes WHERE json_extract(resultado,'$.cep_status')='Pendente' LIMIT 1").get())loadBases(ufList).catch(e=>lastError=e.message);
 }
 onmessage=event=>{queue=queue.then(async()=>{try{const result=await handle(event.data);if(result.binary)postMessage({id:event.data.id,result},[result.binary.buffer]);else postMessage({id:event.data.id,result});}

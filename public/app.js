@@ -11,7 +11,7 @@ const statusLabels = {
 };
 const statusHints = {
   all:'Use a situação, a confiança ou a busca para encontrar os clientes que deseja conferir.',
-  review:'Sugestões por interpretação do endereço. Confira o nome, o bairro e a confiança antes de aplicar.',
+  review:'Sugestões que aguardam escolha. As de alta confiança são selecionadas automaticamente. Confira nome, bairro e confiança nos demais casos.',
   changed:'O CEP para exportar tem dígitos diferentes do CEP da carga.',
   alternatives:'Há mais de um CEP sugerido para o endereço. Confira a opção escolhida e as alternativas.',
   'not-found':'A base consultada não encontrou um CEP para estes endereços. Abra a conferência para ver o motivo.',
@@ -123,7 +123,7 @@ function renderRow(row) {
   const suggestions = row.cep_quantidade_sugestoes || 0;
   const status = {'Revisar endereço':'Aguardando revisão', 'Dados insuficientes':'Dados incompletos',
     'Aplicado em lote pelo usuário':'Aplicado em massa'}[row.cep_status] || row.cep_status;
-  const canonical = row.cep_status === 'Revisar endereço' && row.cep_nome_canonico
+  const canonical = CepReview.levels.includes(CepReview.confidenceOf(row)) && row.cep_nome_canonico
     ? '<small class="canonical">Nome sugerido · '+escapeHtml(row.cep_nome_canonico)+'</small>' : '';
   const alternatives = suggestions > 1 ? '<small>'+number(suggestions-1)+' alternativa(s)</small>' : '';
   const reason = ['Não encontrado','Dados insuficientes','Erro'].includes(row.cep_status)

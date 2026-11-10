@@ -1,6 +1,6 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {DatabaseSync}=require('node:sqlite');
-const {chooseSuggestion,applyBulk}=require('./selection');
+const {chooseSuggestion,applyBulk,selectHighConfidence,applyStoredHighConfidence}=require('./selection');
 const {filteredRows,bulkCandidates}=require('./public/review-utils');
 const {gerarUpdates}=require('./sql');
 function result(id,confidence='Média') {
@@ -65,6 +65,34 @@ test('cada nível pode ser aplicado em massa preservando original e exportação
   assert.equal(filteredRows(read(db),{confidence:level}).length,1);
   db.close();
  }
+});
+test('cargas salvas selecionam só as altas pendentes, preservam escolha manual e permitem repetir a atualização',()=>{
+ const db=setup();
+ assert.deepEqual(applyStoredHighConfidence(db),{aplicados:1});
+ const rows=read(db);
+ assert.equal(rows[0].cep_status,'Selecionado automaticamente');
+ assert.equal(rows[0].cep_confianca,'Alta');
+ assert.equal(rows[0].cep_anterior,'17.250-000');
+ assert.ok(rows.slice(1).every(row=>row.cep_status==='Revisar endereço'));
+ assert.deepEqual(applyStoredHighConfidence(db),{aplicados:0});
+ const manual=chooseSuggestion(result(1,'Alta'),'17.259-999');
+ assert.equal(selectHighConfidence(manual),manual);
+ for(const level of ['Média','Baixa']){
+  const row=result(1,level);
+  assert.equal(selectHighConfidence(row),row);
+ }
+ db.close();
+});
+test('alta confiança respeita CEP específico presente nas alternativas com a mesma raiz',()=>{
+ const row=result(10,'Alta');
+ row.cli_cep=row.cep_anterior='17.250-099';
+ row.cep_sugestoes.push({...row.cep_sugestoes[0],cep:'17.250-099',confianca:'Média'});
+ const selected=selectHighConfidence(row);
+ assert.equal(selected.cli_cep,'17.250-099');
+ assert.equal(selected.cep_alterado,false);
+ assert.equal(selected.cep_sugestoes[0].cep,'17.250-099');
+ assert.equal(selected.cep_sugestoes[0].selecionado,true);
+ assert.equal(row.cep_sugestoes[0].selecionado,false);
 });
 test('outra carga, confiança modificada e sugestão trocada não são aplicadas',()=>{
  const db=setup(),items=bulkCandidates(read(db));
