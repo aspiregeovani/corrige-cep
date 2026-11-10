@@ -30,6 +30,26 @@ test('filtros de confiança são exatos e a busca limita a aplicação em todas 
  assert.equal(filteredRows(rows,{confidence:'Média',code:'12'}).length,0);
  assert.equal(filteredRows(rows,{confidence:'Média',query:'CANONICA'}).length,61);
 });
+test('situações distinguem não encontrado, erro, pendente, alterados e alternativas e combinam com a busca',()=>{
+ const rows=[
+  {...result(1,'Alta'),_rowId:1},
+  {...result(2,'Baixa'),_rowId:2,cep_status:'Aplicado em lote pelo usuário',cep_alterado:true},
+  {...result(3),_rowId:3,cep_status:'Não encontrado',cep_quantidade_sugestoes:0,cep_sugestoes:[]},
+  {...result(4),_rowId:4,cep_status:'Erro',cep_quantidade_sugestoes:0,cep_sugestoes:[]},
+  {...result(5),_rowId:5,cep_status:'Pendente',cep_quantidade_sugestoes:0,cep_sugestoes:[]},
+ ];
+ rows[0].cep_quantidade_sugestoes=2;
+ rows[1].cep_quantidade_sugestoes=2;
+ const ids=tab=>filteredRows(rows,{tab}).map(r=>r._rowId);
+ assert.deepEqual(ids('not-found'),[3]);
+ assert.deepEqual(ids('problems'),[4]);
+ assert.deepEqual(ids('pending'),[5]);
+ assert.deepEqual(ids('changed'),[2]);
+ assert.deepEqual(ids('review'),[1]);
+ assert.deepEqual(ids('alternatives'),[1,2]);
+ assert.deepEqual(filteredRows(rows,{tab:'alternatives',confidence:'Baixa',query:'BARIRI'}).map(r=>r._rowId),[2]);
+ assert.equal(bulkCandidates(filteredRows(rows,{tab:'alternatives'})).length,1);
+});
 test('cada nível pode ser aplicado em massa preservando original e exportação SQL',()=>{
  for(const level of ['Alta','Média','Baixa']) {
   const db=setup(),items=bulkCandidates(filteredRows(read(db),{confidence:level}));

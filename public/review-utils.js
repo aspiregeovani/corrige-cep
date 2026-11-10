@@ -22,13 +22,25 @@
    (!confidence||pdfConfidenceOf(r)===confidence));
  }
  function filteredRows(rows,{tab='all',confidence='',code='',query=''}={}) {
-  let result=rows.filter(r=>tab==='review'?r.cep_status==='Revisar endereço':tab==='changed'?r.cep_alterado:true);
+  let result=rows.filter(r=>matchesStatus(r,tab));
   if(levels.includes(confidence))result=result.filter(r=>confidenceOf(r)===confidence);
   const c=searchNorm(code),q=searchNorm(query);
   if(c)result=result.filter(r=>searchNorm(r.cli_codigo)===c);
   if(q)result=result.filter(r=>[r.cli_endereco,r.cli_numero,r.cli_bairro,r.cli_cidade,r.cli_uf,r.uf,r.descricao,r.cep_anterior,r.cli_cep,r.cep_nome_canonico]
    .some(v=>searchNorm(v).includes(q)) || (/^\d{3,8}$/.test(q)&&[r.cep_anterior,r.cli_cep].some(v=>String(v??'').replace(/\D/g,'').includes(q))));
   return result;
+ }
+ function matchesStatus(row,status) {
+  switch(status){
+   case 'review': return row.cep_status==='Revisar endereço';
+   case 'changed': return Boolean(row.cep_alterado);
+   case 'alternatives': return row.cep_quantidade_sugestoes>1;
+   case 'not-found': return row.cep_status==='Não encontrado';
+   case 'pending': return row.cep_status==='Pendente';
+   case 'problems': return ['Dados insuficientes','Erro'].includes(row.cep_status);
+   case 'selected': return row.cep_sugestoes?.some(s=>s.selecionado)||row.cep_status==='CEP anterior mantido';
+   default: return true;
+  }
  }
  function bulkCandidates(rows) {
   return rows.filter(r=>r.cep_status==='Revisar endereço'&&levels.includes(r.cep_confianca)&&
@@ -37,5 +49,5 @@
    !keepSpecificCep(r.cli_cep,r.cep_sugestoes[0].cep))
    .map(r=>({id:r._rowId,cep:r.cep_sugestoes[0].cep,confianca:r.cep_confianca}));
  }
- return {levels,searchNorm,confidenceOf,filteredRows,bulkCandidates,keepSpecificCep,pdfConfidenceOf,pdfRows};
+ return {levels,searchNorm,confidenceOf,filteredRows,matchesStatus,bulkCandidates,keepSpecificCep,pdfConfidenceOf,pdfRows};
 });

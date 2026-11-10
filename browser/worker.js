@@ -39,14 +39,14 @@ function originals(){return db.prepare('SELECT original FROM clientes').all().ma
 const {loadCities,fetchJSON}=require('./postal-loader');
 let baseProgress=null;
 const unavailable=(uf,city)=>db.prepare('SELECT motivo FROM cidades_ausentes WHERE uf=? AND cidade=?').get(uf,city);
-async function cloudStatus(){return (await fetchJSON('/api/postal')).bases;}
+async function cloudStatus(force=false){return (await fetchJSON('/api/postal',{cache:force?'reload':'default'})).bases;}
 async function loadBases(ufs,force=false){
  if(busy)throw Error('Outra importação está em andamento.');busy=true;lastError='';
  const cities=new Map();for(const c of originals()){const uf=core.getUf(c),city=core.norm(c.cli_cidade);if(ufs.includes(uf)&&city){const key=uf+'|'+city;const item=cities.get(key)||{uf,city,count:0};item.count++;cities.set(key,item);}}
  baseProgress={total:cities.size,completed:0};
  if(core.getState('pausado')!=='1')start();
  try{
-  const bases=await cloudStatus(),baseByUf=new Map(bases.map(b=>[b.uf,b]));
+  const bases=await cloudStatus(force),baseByUf=new Map(bases.map(b=>[b.uf,b]));
   for(const base of bases)db.prepare('INSERT OR REPLACE INTO bases VALUES(?,?,?,?,?)').run(base.uf,base.fonte,base.versao,base.baixado_em,base.registros);
   const result=await loadCities([...cities.values()].sort((a,b)=>b.count-a.count),{
    isCached:({uf,city})=>!force&&(db.prepare('SELECT 1 FROM cidades_carregadas WHERE uf=? AND cidade=?').get(uf,city)||unavailable(uf,city)),
@@ -98,11 +98,22 @@ async function handle({url,method,body}){
   if(busy)return {status:409,data:{error:'Aguarde o carregamento das bases terminar.'}};
   const value=JSON.parse(body.files.file.text.replace(/^\uFEFF/,'')),arrays=Array.isArray(value)?[value]:Object.values(value).filter(Array.isArray),list=arrays.length===1?arrays[0]:null;
   if(!list||list.some(c=>!c||typeof c!=='object'||Array.isArray(c)))throw Error('O JSON deve conter uma lista de clientes.');
-  running=false;db.exec('BEGIN');try{db.exec('DELETE FROM clientes');const put=db.prepare('INSERT INTO clientes(original,resultado) VALUES(?,?)');
+  running=false;lastError='';baseProgress=null;
+  db.exec('BEGIN');try{db.exec('DELETE FROM clientes');const put=db.prepare('INSERT INTO clientes(original,resultado) VALUES(?,?)');
    for(const c of list)put.run(JSON.stringify(c),JSON.stringify({...c,cli_cep:core.mask(c.cli_cep??''),cep_anterior:c.cli_cep??'',cep_status:'Pendente',cep_alterado:false,cep_quantidade_sugestoes:0,cep_sugestoes:[]}));
+   const cities=new Set();
+   for(const c of list){
+    const uf=core.getUf(c),city=core.norm(c.cli_cidade),key=uf+'|'+city;
+    if(cities.has(key))continue;
+    cities.add(key);
+    db.prepare('DELETE FROM cidades_carregadas WHERE uf=? AND cidade=?').run(uf,city);
+    db.prepare('DELETE FROM cidades_ausentes WHERE uf=? AND cidade=?').run(uf,city);
+    db.prepare('DELETE FROM enderecos WHERE uf=? AND cidade=?').run(uf,city);
+   }
    core.setState('execucao_id',crypto.randomUUID());core.setState('pausado','0');db.exec('COMMIT');
   }catch(e){db.exec('ROLLBACK');throw e;}
-  await save();loadBases([...new Set(list.map(core.getUf))]).catch(()=>{});return {data:{total:list.length}};
+  require('../review').clearReviewCache(db);
+  await save();loadBases([...new Set(list.map(core.getUf))],true).catch(e=>lastError=e.message);return {data:{total:list.length}};
  }
  if(url==='/api/download'){
   if(busy)return {status:409,data:{error:'Outra importação está em andamento.'}};
